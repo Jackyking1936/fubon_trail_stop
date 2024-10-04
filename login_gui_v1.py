@@ -14,9 +14,10 @@ class LoginForm(QWidget):
 
         self.main_app_object = MainApp
         self.sdk = fubon_sdk
+        self.icon_path = icon_path
 
         my_icon = QIcon()
-        my_icon.addFile(icon_path)
+        my_icon.addFile(self.icon_path)
 
         self.setWindowIcon(my_icon)
         self.setWindowTitle('新一代API登入')
@@ -122,7 +123,7 @@ class LoginForm(QWidget):
                     with open('info.pkl', 'wb') as f:
                         pickle.dump(user_info_dict, f)
                     
-                    self.main_app = self.main_app_object(self.sdk, self.active_account)
+                    self.main_app = self.main_app_object(self.sdk, self.active_account, self.icon_path)
                     self.main_app.show()
                     self.close()
 
@@ -132,7 +133,7 @@ class LoginForm(QWidget):
                         with open('info.pkl', 'wb') as f:
                             pickle.dump(user_info_dict, f)
 
-                    self.main_app = self.main_app_object(self.sdk, self.active_account)
+                    self.main_app = self.main_app_object(self.sdk, self.active_account, self.icon_path)
                     self.main_app.show()
                     self.close()
                     

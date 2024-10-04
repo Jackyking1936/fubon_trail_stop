@@ -1,4 +1,4 @@
-from login_gui import LoginForm
+from login_gui_v1 import LoginForm
 from auto_save_dict import AutoSaveDict
 
 import sys
@@ -48,17 +48,17 @@ class Communicate(QObject):
     del_row_signal = Signal(int)
 
 class MainApp(QWidget):
-    def __init__(self, active_account):
+    def __init__(self, sdk, active_account, icon_path):
         super().__init__()
 
         my_icon = QIcon()
-        my_icon.addFile('condition.png')
-
+        my_icon.addFile(icon_path)
         self.setWindowIcon(my_icon)
-        self.setWindowTitle("Python條件單庫存停損停利(教學範例，僅限現股)")
+        self.setWindowTitle("Python條件單庫存移動停損利(教學範例，僅限現股)")
         self.resize(1200, 600)
         self.active_account = active_account
         
+        self.sdk = sdk
         self.mutex = QMutex()
         
         # 製作上下排列layout上為庫存表，下為log資訊
@@ -130,10 +130,10 @@ class MainApp(QWidget):
 
         self.print_log("login success, 現在使用帳號: {}".format(self.active_account.account))
         self.print_log("建立行情連線...")
-        sdk.init_realtime(Mode.Normal) # 建立行情連線
+        self.sdk.init_realtime(Mode.Normal) # 建立行情連線
         self.print_log("行情連線建立OK")
-        self.reststock = sdk.marketdata.rest_client.stock
-        self.wsstock = sdk.marketdata.websocket_client.stock
+        self.reststock = self.sdk.marketdata.rest_client.stock
+        self.wsstock = self.sdk.marketdata.websocket_client.stock
 
         # slot function connect
         self.button_start.clicked.connect(self.on_button_start_clicked)
@@ -326,7 +326,7 @@ class MainApp(QWidget):
                         self.communicator.item_update_signal.emit(content.stock_no, '獲利率%', str(round(new_rate_return+self.epsilon, 2))+"%")
 
                         if content.stock_no in self.sl_condition_map:
-                            cancel_res = sdk.stock.cancel_condition_orders(self.active_account, self.sl_condition_map[content.stock_no])
+                            cancel_res = self.sdk.stock.cancel_condition_orders(self.active_account, self.sl_condition_map[content.stock_no])
                             if cancel_res.is_success:
                                 self.print_log("刪單成功: "+self.sl_condition_map[content.stock_no])
                             sl_price = self.tablewidget.item(self.row_idx_map[content.stock_no], self.col_idx_map['停損']).text()
@@ -340,7 +340,7 @@ class MainApp(QWidget):
                                 item.setCheckState(Qt.Unchecked)
                         
                         if content.stock_no in self.tp_condition_map:
-                            cancel_res = sdk.stock.cancel_condition_orders(self.active_account, self.tp_condition_map[content.stock_no])
+                            cancel_res = self.sdk.stock.cancel_condition_orders(self.active_account, self.tp_condition_map[content.stock_no])
                             if cancel_res.is_success:
                                 self.print_log("刪單成功: "+self.tp_condition_map[content.stock_no])
                             tp_price = self.tablewidget.item(self.row_idx_map[content.stock_no], self.col_idx_map['停利']).text()
@@ -405,11 +405,11 @@ class MainApp(QWidget):
                             
                             # condition order delete process
                             if content.stock_no in self.sl_condition_map:
-                                cancel_res = sdk.stock.cancel_condition_orders(self.active_account, self.sl_condition_map[content.stock_no])
+                                cancel_res = self.sdk.stock.cancel_condition_orders(self.active_account, self.sl_condition_map[content.stock_no])
                                 if cancel_res.is_success:
                                     self.sl_condition_map.pop(content.stock_no)
                             if content.stock_no in self.tp_condition_map:
-                                cancel_res = sdk.stock.cancel_condition_orders(self.active_account, self.tp_condition_map[content.stock_no])
+                                cancel_res = self.sdk.stock.cancel_condition_orders(self.active_account, self.tp_condition_map[content.stock_no])
                                 if cancel_res.is_success:
                                     self.tp_condition_map.pop(content.stock_no)
                             
@@ -495,7 +495,7 @@ class MainApp(QWidget):
             end_datetime = now_datetime + timedelta(days=89)
             end_date = datetime.strftime(end_datetime, '%Y%m%d')
 
-        res = sdk.stock.single_condition(self.active_account, start_date, end_date, StopSign.Full , condition, order)
+        res = self.sdk.stock.single_condition(self.active_account, start_date, end_date, StopSign.Full , condition, order)
         return res
 
     def onItemClicked(self, item):
@@ -573,7 +573,7 @@ class MainApp(QWidget):
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
                 symbol = self.tablewidget.item(item.row(), self.col_idx_map['股票代號']).text()
                 if symbol in self.sl_condition_map:
-                    cancel_res = sdk.stock.cancel_condition_orders(self.active_account, self.sl_condition_map[symbol])
+                    cancel_res = self.sdk.stock.cancel_condition_orders(self.active_account, self.sl_condition_map[symbol])
                     if cancel_res.is_success:
                         self.sl_condition_map.pop(symbol)
                 if symbol in self.stop_loss_dict:
@@ -585,7 +585,7 @@ class MainApp(QWidget):
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
                 symbol = self.tablewidget.item(item.row(), self.col_idx_map['股票代號']).text()
                 if symbol in self.tp_condition_map:
-                    cancel_res = sdk.stock.cancel_condition_orders(self.active_account, self.tp_condition_map[symbol])
+                    cancel_res = self.sdk.stock.cancel_condition_orders(self.active_account, self.tp_condition_map[symbol])
                     if cancel_res.is_success:
                         self.tp_condition_map.pop(symbol)
                 if symbol in self.take_profit_dict:
@@ -675,7 +675,7 @@ class MainApp(QWidget):
 
     # 視窗啟動時撈取對應帳號的inventories和unrealized_pnl初始化表格
     def table_init(self):
-        inv_res = sdk.accounting.inventories(self.active_account)
+        inv_res = self.sdk.accounting.inventories(self.active_account)
         if inv_res.is_success:
             self.print_log("庫存抓取成功")
             inv_data = inv_res.data
@@ -686,7 +686,7 @@ class MainApp(QWidget):
             self.print_log("庫存抓取失敗")
         
         self.print_log("抓取未實現損益...")
-        upnl_res = sdk.accounting.unrealized_gains_and_loses(self.active_account)
+        upnl_res = self.sdk.accounting.unrealized_gains_and_loses(self.active_account)
         if upnl_res.is_success:
             self.print_log("未實現損益抓取成功")
             upnl_data = upnl_res.data
@@ -695,7 +695,7 @@ class MainApp(QWidget):
         else:
             self.print_log("未實現損益抓取失敗")
 
-        get_res = sdk.stock.get_condition_order(self.active_account)
+        get_res = self.sdk.stock.get_condition_order(self.active_account)
         condition_status_map = {}
         if get_res.is_success:
             for res in get_res.data:
@@ -832,8 +832,8 @@ class MainApp(QWidget):
         self.tablewidget.setRowCount(0)
 
         self.print_log("建立WebSocket行情連線")
-        sdk.init_realtime(Mode.Normal)
-        self.wsstock = sdk.marketdata.websocket_client.stock
+        self.sdk.init_realtime(Mode.Normal)
+        self.wsstock = self.sdk.marketdata.websocket_client.stock
         self.wsstock.on("connect", self.handle_connect)
         self.wsstock.on("disconnect", self.handle_disconnect)
         self.wsstock.on("error", self.handle_error)
@@ -842,7 +842,7 @@ class MainApp(QWidget):
 
         self.print_log("抓取庫存...")
         self.table_init()
-        sdk.set_on_filled(self.on_filled)
+        self.sdk.set_on_filled(self.on_filled)
 
     def on_button_stop_clicked(self):
         self.print_log("停止執行監控")
@@ -885,7 +885,7 @@ class MainApp(QWidget):
         # do stuff
         self.print_log("disconnect websocket...")
         self.wsstock.disconnect()
-        sdk.logout()
+        self.sdk.logout()
 
         try:
             if self.fake_ws_timer.is_alive():
@@ -910,7 +910,7 @@ if __name__ == "__main__":
     else:
         app = QApplication.instance()
     app.setStyleSheet("QWidget{font-size: 12pt;}")
-    form = LoginForm(MainApp, sdk, 'condition.png')
+    form = LoginForm(MainApp, sdk, 'trail.png')
     form.show()
     
     sys.exit(app.exec())
