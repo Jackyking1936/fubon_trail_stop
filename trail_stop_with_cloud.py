@@ -44,6 +44,7 @@ class Communicate(QObject):
     # 定義一個帶參數的信號
     print_log_signal = Signal(str)
     item_update_signal = Signal(str, str, str)
+    handle_message_data_signal = Signal(dict)
     add_new_inv_signal = Signal(str, int, float)
     del_row_signal = Signal(int)
 
@@ -108,6 +109,7 @@ class MainApp(QWidget):
         self.communicator = Communicate()
         self.communicator.print_log_signal.connect(self.print_log)
         self.communicator.item_update_signal.connect(self.item_update)
+        self.communicator.handle_message_data_signal.connect(self.message_update)
         self.communicator.add_new_inv_signal.connect(self.add_new_inv)
         self.communicator.del_row_signal.connect(self.del_table_row)
         
@@ -122,10 +124,10 @@ class MainApp(QWidget):
         self.tickers_name_init()
         self.subscribed_ids = {}
         
-        self.stop_loss_dict = AutoSaveDict('stop_loss_dict.json')
-        self.take_profit_dict = AutoSaveDict('take_profit_dict.json')
-        self.sl_condition_map = AutoSaveDict('sl_condition_map.json')
-        self.tp_condition_map = AutoSaveDict('tp_condition_map.json')
+        self.trail_stop = AutoSaveDict('trail_stop.json')
+        # self.take_profit_dict = AutoSaveDict('take_profit_dict.json')
+        self.trail_guid_map = AutoSaveDict('sl_condition_map.json')
+        # self.tp_condition_map = AutoSaveDict('tp_condition_map.json')
 
         # 模擬用變數
         self.fake_price_cnt = 0
@@ -190,7 +192,7 @@ class MainApp(QWidget):
                     print(condition_res)
                     if condition_res.is_success:
                         item.setText(str(new_sl_price))
-                        self.stop_loss_dict[symbol] = new_sl_price
+                        self.trail_stop[symbol] = new_sl_price
                         self.sl_condition_map[symbol] = condition_res.data.guid
                         self.tablewidget.setItem(row, j, item)
                         self.print_log(symbol+"...停損設定成功: "+str(new_sl_price)+", 條件單號: "+condition_res.data.guid)
@@ -366,8 +368,8 @@ class MainApp(QWidget):
                             # del table row and unsubscribe
                             self.communicator.del_row_signal.emit(self.row_idx_map[content.stock_no])
 
-                            if content.stock_no in self.stop_loss_dict:
-                                self.stop_loss_dict.pop(content.stock_no)
+                            if content.stock_no in self.trail_stop:
+                                self.trail_stop.pop(content.stock_no)
                             if content.stock_no in self.take_profit_dict:
                                 self.take_profit_dict.pop(content.stock_no)
                             if content.stock_no in self.subscribed_ids:
@@ -417,10 +419,13 @@ class MainApp(QWidget):
 
     def fake_message(self):
         self.price_interval+=1
-        stock_list = ['2330', '2881', '2454', '00940', '1101', '6598', '2509', '3230', '4903', '6661']
-        json_template = '''{{"event":"data","data":{{"symbol":"{symbol}","type":"EQUITY","exchange":"TWSE","market":"TSE","price":{price},"size":713,"bid":16.67,"ask":{price}, "isLimitUpAsk":true, "volume":8066,"isClose":true,"time":1718343000000000,"serial":9475857}},"id":"w4mkzAqYAYFKyEBLyEjmHEoNADpwKjUJmqg02G3OC9YmV","channel":"trades"}}'''
+        # stock_list = ['2330', '2881', '2454', '00940', '1101', '6598', '2509', '3230', '4903', '6661']
+        stock_list = ['00679B']
+        json_template = '''{{"event":"data", "data":{{"date": "2024-10-04", "type": "EQUITY", "exchange": "TPEx", "market": "OTC", "symbol": "{symbol}", "name": "建達", "referencePrice": 23.45, "previousClose": 23.45, "openPrice": 24.5, "openTime": 1728003611612464, "highPrice": 25.75, "highTime": 1728004595544768, "lowPrice": 23.75, "lowTime": 1728003784656798, "closePrice": 25.75, "closeTime": 1728019800000000, "avgPrice": 25.29, "change": 2.3, "changePercent": 9.81, "amplitude": 8.53, "lastPrice": 25.5, "lastSize": 10, "bids": [{{"price": 25.75, "size": 13285}}, {{"price": 25.7, "size": 22}}, {{"price": 25.6, "size": 4}}, {{"price": 25.55, "size": 1}}, {{"price": 25.5, "size": 1}}], "asks": [], "total": {{"tradeValue": 154027350, "tradeVolume": 6091, "tradeVolumeAtBid": 958, "tradeVolumeAtAsk": 4754, "transaction": 1235, "time": 1728019800000000}}, "lastTrade": {{"bid": 25.75, "price": {price}, "size": 10, "time": 1728019800000000, "serial": 2632362}}, "lastTrial": {{"bid": 25.75, "price": 25.75, "size": 10, "time": 1728019787685448, "serial": 2631092}}, "isLimitUpPrice": True, "isLimitUpBid": True, "isClose": True, "serial": 2632362, "lastUpdated": 1728019800000000}} ,"id":"w4mkzAqYAYFKyEBLyEjmHEoNADpwKjUJmqg02G3OC9YmV","channel":"aggregates"}}'''
         json_price = 15+self.price_interval
         json_str = json_template.format(symbol=stock_list[self.price_interval % len(stock_list)], price=str(json_price))
+        json_str = json_str.replace('True', 'true')
+        json_str = json_str.replace("\'", "\"")
         self.handle_message(json_str)
 
     # 更新表格內某一格值的slot function
@@ -430,31 +435,8 @@ class MainApp(QWidget):
         except Exception as e:
             print(e, symbol, col_name, value)
 
-    def condition_market_order(self, symbol, order_qty, trigger_value, sl_tp):
-        if sl_tp == 'sl':
-            c_operator = Operator.LessThanOrEqual
-        elif sl_tp == 'tp':
-            c_operator = Operator.GreaterThanOrEqual
-
-        condition = Condition(
-            market_type = TradingType.Reference, 
-            symbol = symbol,
-            trigger = TriggerContent.MatchedPrice,
-            trigger_value = str(trigger_value),
-            comparison = c_operator
-        )
-
-        order = ConditionOrder(
-            buy_sell= BSAction.Sell,
-            symbol = symbol,
-            quantity = int(order_qty),
-            price = None,
-            market_type = ConditionMarketType.Common,
-            price_type = ConditionPriceType.Market,
-            time_in_force = TimeInForce.ROD,
-            order_type = ConditionOrderType.Stock,
-        )
-
+    def condition_market_order(self, symbol, trail_percent, order_qty, trigger_value):
+        
         now_datetime = datetime.now()
         now_time_str = datetime.strftime(now_datetime, '%H%M%S')
 
@@ -467,8 +449,21 @@ class MainApp(QWidget):
             end_datetime = now_datetime + timedelta(days=89)
             end_date = datetime.strftime(end_datetime, '%Y%m%d')
 
-        res = self.sdk.stock.single_condition(self.active_account, start_date, end_date, StopSign.Full , condition, order)
-        return res
+        trail_order = TrailOrder(
+            symbol = symbol,
+            price = str(trigger_value),
+            direction = Direction.Down,
+            percentage = trail_percent, # 漲跌 % 數
+            buy_sell = BSAction.Sell,
+            quantity = int(order_qty),
+            price_type = ConditionPriceType.Market,
+            diff = 0, # 向上 or 向下追買 tick數 (向下為負值)
+            time_in_force = TimeInForce.ROD,
+            order_type = ConditionOrderType.Stock
+        )
+
+        trail_order_res = sdk.stock.trail_profit(self.active_account, start_date, end_date, StopSign.Full, trail_order)
+        return trail_order_res
 
     def onItemClicked(self, item):
         if item.checkState() == Qt.Checked:
@@ -481,47 +476,92 @@ class MainApp(QWidget):
             order_qty = self.tablewidget.item(item.row(), self.col_idx_map['庫存股數']).text()
 
             if item.column() == self.col_idx_map['移停(%)']:
-                if symbol in self.stop_loss_dict:
+                if symbol in self.trail_stop:
                     return
                 
                 try:
-                    item_price = float(item_str)
+                    item_trail_percent = int(item_str)
                 except Exception as e:
                     self.print_log(str(e))
-                    self.print_log("請輸入正確價格，停損價格必須小於現價並大於0")
+                    self.print_log("請輸入正確移動停損利(%), 需為大於0之正整數")
                     item.setCheckState(Qt.Unchecked)
-                    print("stop loss:", self.stop_loss_dict)
+                    print("Trail Stop lit:", self.trail_stop)
                     return
                 
-                if cur_price <= item_price or 0 >= item_price:
-                    self.print_log("請輸入正確價格，停損價格必須小於現價並大於0")
+                if 0 >= item_trail_percent:
+                    self.print_log("請輸入正確移動停損利(%), 需為大於0之正整數")
                     item.setCheckState(Qt.Unchecked)
                 else:
                     # self.print_log("停損條件單設定中...")
-                    condition_res = self.condition_market_order(symbol, order_qty, item_price, 'sl')
-                    if condition_res.is_success:
-                        self.stop_loss_dict[symbol] = item_price
-                        self.sl_condition_map[symbol] = condition_res.data.guid
+                    trail_res = self.condition_market_order(symbol, item_trail_percent, order_qty, cur_price)
+                    if trail_res.is_success:
+                        self.trail_stop[symbol] = item_trail_percent
+                        self.trail_guid_map[symbol] = trail_res.data.guid
                         item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-                        self.print_log(symbol+"...停損設定成功: "+item_str+", 條件單號: "+condition_res.data.guid)
+                        self.print_log(f"{symbol}...移動停損利設定成功: {item_str}%, 單號: {trail_res.data.guid}")
+                        self.tablewidget.item(item.row(), self.col_idx_map['當前基準價']).setText(str(cur_price))
+                        stop_price = round(cur_price*(100-item_trail_percent)/100, 2)
+                        self.tablewidget.item(item.row(), self.col_idx_map['觸發價']).setText(str(stop_price))
+                        self.tablewidget.item(item.row(), self.col_idx_map['設定股數']).setText(str(order_qty))
+
                     else:
-                        self.print_log(symbol+"...停損設定失敗: "+condition_res.message)
+                        self.print_log(symbol+"...移動停損利設定失敗: "+trail_res.message)
                         item.setCheckState(Qt.Unchecked)
                     
-                print("stop loss:", self.stop_loss_dict)
+                print("Trail Stop list:", self.trail_stop)
 
         elif item.checkState() == Qt.Unchecked:
             if item.column() == self.col_idx_map['移停(%)']:
                 item.setFlags(item.flags() | Qt.ItemIsEditable)
                 symbol = self.tablewidget.item(item.row(), self.col_idx_map['股票代號']).text()
-                if symbol in self.sl_condition_map:
-                    cancel_res = self.sdk.stock.cancel_condition_orders(self.active_account, self.sl_condition_map[symbol])
+                if symbol in self.trail_stop:
+                    cancel_res = self.sdk.stock.cancel_condition_orders(self.active_account, self.trail_guid_map[symbol])
                     if cancel_res.is_success:
-                        self.sl_condition_map.pop(symbol)
-                if symbol in self.stop_loss_dict:
-                    self.stop_loss_dict.pop(symbol)
-                    self.print_log(symbol+"...移除停損，請重新設置")
-                    print("stop loss:", self.stop_loss_dict)
+                        self.trail_stop.pop(symbol)
+                        self.trail_guid_map.pop(symbol)
+                        self.print_log(symbol+"...移停已移除，請重新設置")
+                        self.tablewidget.item(item.row(), self.col_idx_map['當前基準價']).setText('-')
+                        self.tablewidget.item(item.row(), self.col_idx_map['觸發價']).setText('-')
+                        self.tablewidget.item(item.row(), self.col_idx_map['設定股數']).setText('-')
+                        print("Trail Stop list:", self.trail_stop)
+
+    def message_update(self, data_dict):
+        symbol = data_dict["symbol"]
+        
+        if symbol not in self.row_idx_map:
+            return
+        
+        if 'lastTrade' in data_dict:
+            cur_price = data_dict['lastTrade']["price"]
+        else:
+            return
+                    
+        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['現價']).setText(str(cur_price))
+    
+        avg_price_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存均價'])
+        avg_price = avg_price_item.text()
+    
+        share_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存股數'])
+        share = share_item.text()
+    
+        cur_pnl = (cur_price-float(avg_price))*float(share)
+        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['損益試算']).setText(str(int(round(cur_pnl, 0))))
+    
+        return_rate = cur_pnl/(float(avg_price)*float(share))*100
+        self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['獲利率%']).setText(str(round(return_rate+self.epsilon, 2))+'%')
+        
+        cur_base_price_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['當前基準價'])
+        if cur_base_price_item.text() == '-':
+            return
+        else:
+            cur_base_price = float(cur_base_price_item.text())
+            
+            if cur_price>cur_base_price:
+                item_trail_percent = int(self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['移停(%)']).text())
+                new_base_price = cur_price
+                new_stop_price = round(new_base_price*(100-item_trail_percent)/100, 2)
+                cur_base_price_item.setText(str(new_base_price))
+                self.tablewidget.item(cur_base_price_item.row(), self.col_idx_map['觸發價']).setText(str(new_stop_price))
 
     def handle_message(self, message):
         msg = json.loads(message)
@@ -547,50 +587,15 @@ class MainApp(QWidget):
             if 'isTrial' in data:
                 if data['isTrial']:
                     return
-            symbol = data['symbol']
-            cur_price = data['lastTrade']['price']
-            if 'isClose' in data:
-                if data['isClose']:
-                    self.communicator.item_update_signal.emit(symbol, '現價', str(cur_price))
+            self.communicator.handle_message_data_signal.emit(data)
 
         # data事件處理
         elif event == "data":
             if 'isTrial' in data:
                 if data['isTrial']:
                     return
+            self.communicator.handle_message_data_signal.emit(data)
             
-            # print('handle_message get lock', data['symbol'])
-            self.mutex.lock()
-            
-            symbol = data["symbol"]
-            
-            if symbol not in self.row_idx_map:
-                # print("not in unlock")
-                self.mutex.unlock()
-                return
-            
-            if 'lastTrade' in data:
-                cur_price = data['lastTrade']["price"]
-            else:
-                self.mutex.unlock()
-                return
-                     
-            self.communicator.item_update_signal.emit(symbol, '現價', str(cur_price))
-        
-            avg_price_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存均價'])
-            avg_price = avg_price_item.text()
-        
-            share_item = self.tablewidget.item(self.row_idx_map[symbol], self.col_idx_map['庫存股數'])
-            share = share_item.text()
-        
-            cur_pnl = (cur_price-float(avg_price))*float(share)
-            self.communicator.item_update_signal.emit(symbol, '損益試算', str(int(round(cur_pnl, 0))))
-        
-            return_rate = cur_pnl/(float(avg_price)*float(share))*100
-            self.communicator.item_update_signal.emit(symbol, '獲利率%', str(round(return_rate+self.epsilon, 2))+'%')
-            
-            # print('handle_message release lock', symbol)
-            self.mutex.unlock()
             
     def handle_connect(self):
         self.communicator.print_log_signal.emit('market data connected')
@@ -689,11 +694,11 @@ class MainApp(QWidget):
                     #     if cur_guid in condition_status_map:
                     #         if condition_status_map[cur_guid] != '條件單刪除(C)':
                     #             item.setCheckState(Qt.Checked)
-                    #             if stock_symbol in self.stop_loss_dict:
-                    #                 item.setText(str(self.stop_loss_dict[stock_symbol]))
+                    #             if stock_symbol in self.trail_stop:
+                    #                 item.setText(str(self.trail_stop[stock_symbol]))
                     #         else:
                     #             self.sl_condition_map.pop(stock_symbol)
-                    #             self.stop_loss_dict.pop(stock_symbol)
+                    #             self.trail_stop.pop(stock_symbol)
                     self.tablewidget.setItem(row, j, item)
 
                 elif self.table_header[j] == '當前基準價':
@@ -714,7 +719,7 @@ class MainApp(QWidget):
         self.print_log('庫存資訊初始化完成')
 
         # 調整股票名稱欄位寬度
-        header = self.tablewidget.horizontalHeader()      
+        header = self.tablewidget.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         print(self.row_idx_map)
         print(self.col_idx_map)
