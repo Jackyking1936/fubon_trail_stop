@@ -524,6 +524,7 @@ class MainApp(QWidget):
         self.mutex.unlock()
     
     def trail_stop_fetch(self):
+        import time
         today_date = datetime.today()
         end_date = datetime.strftime(today_date, "%Y%m%d")
         start_date = datetime.strftime(today_date-timedelta(days=90), "%Y%m%d")
@@ -531,8 +532,10 @@ class MainApp(QWidget):
         if not trail_hist_res.is_success:
             print(f"Trail Hist fetch fail, start_date:{start_date}, end_date:{end_date}, message:{trail_hist_res.message}")
         else:
-            for detail in trail_hist_res.data:
+            for i, detail in enumerate(trail_hist_res.data):
                 if "N" in detail.status or "Y" in detail.status:
+                    print(i)
+                    time.sleep(0.2)
                     detail_res = sdk.stock.get_condition_order_by_id(self.active_account, detail.guid)
                     if detail_res.is_success:
                         percent_text = detail.condition_content
@@ -541,7 +544,7 @@ class MainApp(QWidget):
                         print(f"{detail.symbol} fetch detail res fail, message: {detail_res.message}")
                         self.print_log(f"{detail.symbol} fetch detail res fail, message: {detail_res.message}")
                         continue
-                    
+                
                     trail_percent_match = re.search(r'(\d+(?:\.\d+)?)%', percent_text)
                     trigger_price_match = re.search(r'等於(\d+(?:\.\d+)?)元', trigger_text)
 
