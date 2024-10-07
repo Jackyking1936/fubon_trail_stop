@@ -5,6 +5,7 @@ import sys
 import re
 import pickle
 import json
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -524,7 +525,6 @@ class MainApp(QWidget):
         self.mutex.unlock()
     
     def trail_stop_fetch(self):
-        import time
         today_date = datetime.today()
         end_date = datetime.strftime(today_date, "%Y%m%d")
         start_date = datetime.strftime(today_date-timedelta(days=90), "%Y%m%d")
