@@ -532,7 +532,7 @@ class MainApp(QWidget):
             print(f"Trail Hist fetch fail, start_date:{start_date}, end_date:{end_date}, message:{trail_hist_res.message}")
         else:
             for detail in trail_hist_res.data:
-                if "N" in detail.status:
+                if "N" in detail.status or "Y" in detail.status:
                     detail_res = sdk.stock.get_condition_order_by_id(self.active_account, detail.guid)
                     if detail_res.is_success:
                         percent_text = detail.condition_content
